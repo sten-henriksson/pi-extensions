@@ -22,7 +22,7 @@ With this extension the agent starts a gate, does other work, and gets woken wit
 
 `/dream [days]` (default 7) scans this directory's session traces, extracts durable facts per session (cheap model, cached by session mtime), consolidates them into `MEMORY.md` (merge/dedup/prune, changelog, snapshots), and injects it into the system prompt every turn. `/distill [days]` (default 30) mines repeated workflows from the same traces, requires ≥2 distinct sessions (`minOccurrences`), scans for unsafe patterns, and stages SKILL.md candidates under review — activate with `/distill install <name>`.
 
-Files land in `.pi/memory/` (trusted projects) or `~/.pi/agent/memory/` (global fallback): `MEMORY.md`, `config.json` (`mapModel`/`reduceModel` for the independent-verifier rule, e.g. `"google/gemini-2.5-flash"`), `extracts/` cache, `distill-staging/`, `dream-log.jsonl`. Cadence is a once-daily nag, never auto-run. Design: reviewability first (plain markdown you can edit/delete), counting and path-validity in code, zero-packaging is a valid distill outcome.
+Files always land in the repo: `<cwd>/.pi/memory/` (`MEMORY.md`, `config.json` with `mapModel`/`reduceModel` for the independent-verifier rule e.g. `"google/gemini-2.5-flash"`, `extracts/` cache, `distill-staging/`, `dream-log.jsonl`) and `<cwd>/.pi/skills/` for installed skills — never the user config dir, so memory is committed and shared with the repo. Cadence is a once-daily nag, never auto-run. Design: reviewability first (plain markdown you can edit/delete), counting and path-validity in code, zero-packaging is a valid distill outcome.
 
 ## Install
 

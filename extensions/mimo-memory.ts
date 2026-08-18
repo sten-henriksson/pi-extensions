@@ -5,9 +5,9 @@
  *   /dream [days]            consolidate recent session traces into MEMORY.md
  *   /distill [days]          mine repeated workflows → staged candidate skills
  *   /distill list            show staged candidates
- *   /distill install <name>  move a staged skill into .pi/skills (or global)
+ *   /distill install <name>  move a staged skill into .pi/skills (project-local)
  *
- * MEMORY.md (project-local when trusted, else ~/.pi/agent/memory/) is injected
+ * MEMORY.md (<repo>/.pi/memory/ — always project-local, never the user config dir) is injected
  * into the system prompt every turn. Flat single file per repo convention.
  * Detailed docs: README.md § mimo-memory.
  */
@@ -15,7 +15,7 @@ import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 /**
  * llm.ts — model resolution + complete() wrapper for dream/distill pipelines.
@@ -119,7 +119,7 @@ export function parseJsonLoose(raw: string): any | null {
 
 /**
  * corpus.ts — shared substrate for /dream and /distill:
- *   - path resolution (project-local when trusted, global fallback)
+ *   - path resolution (always project-local under <cwd>/.pi/)
  *   - session discovery + transcript building from session JSONL traces
  *   - per-session extract cache (keyed by session mtime) so dream's 7-day
  *     scan is reused by distill's 30-day scan
@@ -128,18 +128,13 @@ export function parseJsonLoose(raw: string): any | null {
 
 
 // ---------- paths ----------
-
-export function isTrusted(ctx: ExtensionContext): boolean {
-	try {
-		return ctx.isProjectTrusted();
-	} catch {
-		return false;
-	}
-}
+// All storage is project-local (<cwd>/.pi/memory/ and <cwd>/.pi/skills/), never
+// under the user's home config dir — memory belongs to the repo, is committed
+// with it, and travels with it. Writing a SKILL.md into an untrusted repo is
+// inert: pi only loads project skills after trust, so there is no escalation.
 
 export function memoryDir(ctx: ExtensionContext): string {
-	if (isTrusted(ctx)) return path.join(ctx.cwd, ".pi", "memory");
-	return path.join(os.homedir(), ".pi", "agent", "memory");
+	return path.join(ctx.cwd, CONFIG_DIR_NAME, "memory");
 }
 
 export function memoryFile(ctx: ExtensionContext): string {
@@ -155,8 +150,7 @@ export function stagingDir(ctx: ExtensionContext): string {
 }
 
 export function skillsInstallDir(ctx: ExtensionContext): string {
-	if (isTrusted(ctx)) return path.join(ctx.cwd, ".pi", "skills");
-	return path.join(os.homedir(), ".pi", "agent", "skills");
+	return path.join(ctx.cwd, CONFIG_DIR_NAME, "skills");
 }
 
 function stateFile(ctx: ExtensionContext): string {
@@ -751,6 +745,7 @@ JSON: {"workflows":[{"name":"...","trigger":"...","steps":["..."],"paths":["..."
 
 /** Inventory of already-available skills (project + global + staged) so distill extends instead of duplicating (MiMo discipline). */
 async function listExistingSkills(ctx: ExtensionContext): Promise<Array<{ name: string; description: string }>> {
+	// global skills dir is READ-only here (don't-duplicate inventory); storage is always project-local
 	const dirs = [skillsInstallDir(ctx), path.join(os.homedir(), ".pi", "agent", "skills"), stagingDir(ctx)];
 	const seen = new Set<string>();
 	const out: Array<{ name: string; description: string }> = [];
@@ -1043,9 +1038,9 @@ async function installStaged(ctx: ExtensionContext, rawName: string): Promise<vo
  *   /dream [days]            consolidate recent session traces into MEMORY.md
  *   /distill [days]          mine repeated workflows → staged candidate skills
  *   /distill list            show staged candidates
- *   /distill install <name>  move a staged skill into .pi/skills (or global)
+ *   /distill install <name>  move a staged skill into .pi/skills (project-local)
  *
- * MEMORY.md (project-local when trusted, else ~/.pi/agent/memory/) is injected
+ * MEMORY.md (<repo>/.pi/memory/ — always project-local, never the user config dir) is injected
  * into the system prompt on every turn, so dream output actually reaches the
  * agent. Dream/distill also nag once when overdue (they never auto-run).
  */
