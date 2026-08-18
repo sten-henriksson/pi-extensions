@@ -1,0 +1,10 @@
+{
+  "name": "pi-extensions",
+  "version": "0.1.0",
+  "description": "Coding-agent extensions for pi: background jobs with completion notifications, and bd (beads) issue-tracker context injection.",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./extensions"]
+  }
+}
