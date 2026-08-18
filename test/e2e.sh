@@ -7,6 +7,9 @@
 set -uo pipefail
 PKG_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PASS=0; FAIL=0
+# Run pi from the package dir: project-local extensions of whatever cwd
+# invoked this script must not collide with the package under test.
+cd "$PKG_DIR"
 
 run() { # run <name> <prompt> <expected-substring>
   local name="$1" prompt="$2" expect="$3"
@@ -32,7 +35,7 @@ run "timeout is not an error" \
   "ERR=no"
 
 run "kill clears the tree" \
-  'MUST actually call bg_run: command "sleep 300 & sleep 300 & wait", name tree. Wait 3s via bash. bg_kill tree. Wait 2s via bash, then pgrep -fc "sleep 300". Reply exactly: SURVIVORS=<count>.' \
+  'MUST actually call bg_run: command "sleep 300 & sleep 300 & wait", name tree. Wait 3s via bash. bg_kill tree. Wait 2s via bash, then run: pgrep -fc "^sleep 300" (anchored — do not drop the ^). Reply exactly: SURVIVORS=<count>.' \
   "SURVIVORS=0"
 
 run "idle start does not crash" \
