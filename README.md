@@ -6,6 +6,7 @@ Extensions for [pi](https://npmjs.com/package/@earendil-works/pi-coding-agent), 
 |---|---|
 | **background-jobs** (`bg_run` / `bg_wait` / `bg_logs` / `bg_list` / `bg_kill`, `/bg`) | First-class background jobs for agents: start long commands detached, get job ids + logs, bounded waits that treat timeouts as *not an error*, whole-process-tree kills, and **automatic completion notifications** injected into the conversation (exit code + tail), with restart re-attach via pid probe + exit-code sentinels. |
 | **beads** | Injects `bd prime` workflow context on session start (deduped, re-armed after compaction) — the pi equivalent of the Claude Code / Codex hooks a bd repo already carries. No-op in repos without bd. |
+| **mimo-memory** (`/dream`, `/distill`) | Cross-session memory & skill distillation, ported from Xiaomi MiMo Code's Evolution theme. `/dream` consolidates session traces into an injectable `MEMORY.md` (map-reduce, mtime-keyed cache, review gate); `/distill` mines repeated workflows, counts occurrences in code, gates on frequency + safety, and stages candidate skills — nothing auto-installed. |
 
 ## Why background-jobs exists
 
@@ -16,6 +17,12 @@ A 24h agent session log (341 bash calls) showed the model hand-rolling job contr
 - 24 tool calls blocked >5min waiting on test gates
 
 With this extension the agent starts a gate, does other work, and gets woken with the result. No polling, no lost jobs.
+
+## mimo-memory
+
+`/dream [days]` (default 7) scans this directory's session traces, extracts durable facts per session (cheap model, cached by session mtime), consolidates them into `MEMORY.md` (merge/dedup/prune, changelog, snapshots), and injects it into the system prompt every turn. `/distill [days]` (default 30) mines repeated workflows from the same traces, requires ≥2 distinct sessions (`minOccurrences`), scans for unsafe patterns, and stages SKILL.md candidates under review — activate with `/distill install <name>`.
+
+Files land in `.pi/memory/` (trusted projects) or `~/.pi/agent/memory/` (global fallback): `MEMORY.md`, `config.json` (`mapModel`/`reduceModel` for the independent-verifier rule, e.g. `"google/gemini-2.5-flash"`), `extracts/` cache, `distill-staging/`, `dream-log.jsonl`. Cadence is a once-daily nag, never auto-run. Design: reviewability first (plain markdown you can edit/delete), counting and path-validity in code, zero-packaging is a valid distill outcome.
 
 ## Install
 

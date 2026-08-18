@@ -1,7 +1,7 @@
 {
   "name": "pi-extensions",
   "version": "0.1.0",
-  "description": "Coding-agent extensions for pi: background jobs with completion notifications, and bd (beads) issue-tracker context injection.",
+  "description": "Coding-agent extensions for pi: background jobs with completion notifications, bd (beads) issue-tracker context injection, and mimo-memory (/dream + /distill cross-session memory & skill distillation).",
   "keywords": ["pi-package"],
   "license": "MIT",
   "pi": {
