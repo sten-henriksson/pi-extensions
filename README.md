@@ -7,6 +7,7 @@ Extensions for [pi](https://npmjs.com/package/@earendil-works/pi-coding-agent), 
 | **background-jobs** (`bg_run` / `bg_wait` / `bg_logs` / `bg_list` / `bg_kill`, `/bg`) | First-class background jobs for agents: start long commands detached, get job ids + logs, bounded waits that treat timeouts as *not an error*, whole-process-tree kills, and **automatic completion notifications** injected into the conversation (exit code + tail), with restart re-attach via pid probe + exit-code sentinels. |
 | **beads** | Injects `bd prime` workflow context on session start (deduped, re-armed after compaction) — the pi equivalent of the Claude Code / Codex hooks a bd repo already carries. No-op in repos without bd. |
 | **mimo-memory** (`/dream`, `/distill`) | Cross-session memory & skill distillation, ported from Xiaomi MiMo Code's Evolution theme. `/dream` consolidates session traces into an injectable `MEMORY.md` (map-reduce, mtime-keyed cache, review gate); `/distill` mines repeated workflows, counts occurrences in code, gates on frequency + safety, and stages candidate skills — nothing auto-installed. |
+| **ralph** (`/ralph`, `ralph_start`/`ralph_done`) | Long-running agent loops (fork of tmustier/pi-ralph-wiggum, MIT) with an **independent completion verifier**: the completion marker is a claim, not a verdict — a judge model (`.ralph/judge.json`, ideally a different model) reviews the task file's verification record before the loop may complete; rejected claims re-prompt with reasons (max 3). |
 
 ## Why background-jobs exists
 
@@ -17,6 +18,12 @@ A 24h agent session log (341 bash calls) showed the model hand-rolling job contr
 - 24 tool calls blocked >5min waiting on test gates
 
 With this extension the agent starts a gate, does other work, and gets woken with the result. No polling, no lost jobs.
+
+## ralph
+
+Long-running loops for verifiable tasks (checklists, refactors, error sweeps): the agent works in iterations, `ralph_done` advances, compaction absorbs history, `.ralph/<name>.md` carries durable state. Forked from [tmustier/pi-ralph-wiggum](https://github.com/tmustier/pi-extensions) (MIT, itself from Geoffrey Huntley's ralph-loop).
+
+**Fork addition — independent verifier** (glla's "bamboozle trap", MiMo Code's `/goal`): on each `<promise>COMPLETE</promise>` a judge model reads the task file's *Final Verification* record (exact command + output) and the agent's claim, and decides whether completion is *demonstrated*. Rejections re-prompt the agent with concrete reasons (cap 3, then completes to avoid a verify-loop; verifier errors fail open). Configure the judge with `.ralph/judge.json`: `{"model": "provider/model-id"}` — use a different model than the working agent for true independence (defaults to the active model). Verified e2e: first claim rejected over a 15-vs-16-byte inconsistency, accepted only after hash-verified evidence.
 
 ## mimo-memory
 
