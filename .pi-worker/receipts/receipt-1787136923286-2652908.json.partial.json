@@ -1,0 +1,20 @@
+{
+  "ts": "2026-08-19T10:55:23.286Z",
+  "pid": 2652908,
+  "model": null,
+  "turns": 1,
+  "final": false,
+  "usage": {
+    "input": 458,
+    "output": 172,
+    "cacheRead": 0,
+    "cacheWrite": 0
+  },
+  "cost": {
+    "input": 0.000687,
+    "output": 0.0012900000000000001,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "total": 0.001977
+  }
+}

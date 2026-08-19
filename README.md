@@ -5,7 +5,7 @@ Extensions for [pi](https://npmjs.com/package/@earendil-works/pi-coding-agent), 
 | Extension | What it does |
 |---|---|
 | **background-jobs** (`bg_run` / `bg_wait` / `bg_logs` / `bg_list` / `bg_kill`, `/bg`) | First-class background jobs for agents: start long commands detached, get job ids + logs, bounded waits that treat timeouts as *not an error*, whole-process-tree kills, and **automatic completion notifications** injected into the conversation (exit code + tail), with restart re-attach via pid probe + exit-code sentinels. |
-| **beads** | Injects `bd prime` workflow context on session start (deduped, re-armed after compaction) — the pi equivalent of the Claude Code / Codex hooks a bd repo already carries. No-op in repos without bd. |
+| **beads** (`/beads`, `/beads refresh`) | Injects `bd prime` workflow context on session start (deduped, re-armed after compaction) — the pi equivalent of the Claude Code / Codex hooks a bd repo already carries. Plus a backlog display: a persistent widget above the editor (in-progress → ready → queued, priority-colored) and `/beads` opening an overlay side panel (Tab cycles ready/in-progress/all-open, Enter shows `bd show` detail, `r` refreshes, j/k navigate). Auto-resyncs after each agent turn. No-op in repos without bd. |
 | **mimo-memory** (`/dream`, `/distill`) | Cross-session memory & skill distillation, ported from Xiaomi MiMo Code's Evolution theme. `/dream` consolidates session traces into an injectable `MEMORY.md` (map-reduce, mtime-keyed cache, review gate); `/distill` mines repeated workflows, counts occurrences in code, gates on frequency + safety, and stages candidate skills — nothing auto-installed. |
 | **ralph** (`/ralph`, `ralph_start`/`ralph_done`) | Long-running agent loops (fork of tmustier/pi-ralph-wiggum, MIT) with an **independent completion verifier**: the completion marker is a claim, not a verdict — a judge model (`.ralph/judge.json`, ideally a different model) reviews the task file's verification record before the loop may complete; rejected claims re-prompt with reasons (max 3). |
 
@@ -40,6 +40,24 @@ pi -e git:github.com/sten-henriksson/pi-extensions
 ```
 
 Then enable/disable individual extensions with `pi config`.
+
+## scripts/model-bench.py
+
+Throughput/latency/cost table for every model your pi can reach — one real
+generation per model through the pi binary, so it measures your actual
+providers, keys and gateways.
+
+```bash
+./scripts/model-bench.py                # every model in `pi --list-models`
+./scripts/model-bench.py zai            # filter by provider/model substring
+./scripts/model-bench.py -n 3 zai       # 3 runs each, best tok/s wins
+./scripts/model-bench.py --md bench.md  # also write the markdown table
+```
+
+Columns: tok/s (visible output tokens over the generation window), TTFT (first
+assistant event — pi's json mode has no token deltas, so this is a proxy), wall,
+output tokens, reasoning tokens, cost. Rate-limited or unauthenticated models
+are listed with the API error instead of being dropped.
 
 ## Develop
 
