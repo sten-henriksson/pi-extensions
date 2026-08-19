@@ -1,0 +1,8 @@
+{
+  "id": "split-remainder",
+  "title": "Preserve cents when splitting a total",
+  "setup": "setup.py",
+  "verify": ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"],
+  "timeout_seconds": 480,
+  "prompt": "Fix `app/money.py` so `split_evenly(total_cents, people)` returns exactly `people` non-negative integer shares summing to `total_cents`. Distribute remainder cents from the first recipient onward. Reject `people <= 0` and negative totals with `ValueError`. Edit production code only; do not modify tests. Run `python3 -m unittest discover -s tests -v`."
+}

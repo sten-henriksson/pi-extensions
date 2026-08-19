@@ -1,0 +1,8 @@
+{
+  "id": "slug-normalization",
+  "title": "Repair punctuation-safe slug normalization",
+  "setup": "setup.py",
+  "verify": ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"],
+  "timeout_seconds": 480,
+  "prompt": "Fix `app/text.py` so `normalize_slug(value)` produces lowercase ASCII slugs. Runs of spaces or punctuation become one hyphen; leading/trailing hyphens are removed; an input containing no alphanumeric characters returns an empty string. Preserve the public function name. Edit production code only; do not modify tests. Run `python3 -m unittest discover -s tests -v` and leave the working tree with the implementation fixed."
+}

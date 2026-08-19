@@ -1,0 +1,8 @@
+{
+  "id": "bounded-retry",
+  "title": "Implement bounded retry semantics",
+  "setup": "setup.py",
+  "verify": ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"],
+  "timeout_seconds": 480,
+  "prompt": "Fix `app/retry.py` so `retry(operation, attempts=3)` retries a callable after exceptions. It returns the first successful result, raises the last exception after exactly `attempts` failures, and raises `ValueError` when attempts is less than one. Do not sleep or add dependencies. Edit production code only; do not modify tests. Run `python3 -m unittest discover -s tests -v`."
+}

@@ -1,1 +1,6 @@
 node_modules/
+__pycache__/
+
+# Generated benchmark reports and local worker receipts
+bench/results/
+.pi-worker/

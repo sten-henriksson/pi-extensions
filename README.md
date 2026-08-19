@@ -59,6 +59,27 @@ assistant event — pi's json mode has no token deltas, so this is a proxy), wal
 output tokens, reasoning tokens, cost. Rate-limited or unauthenticated models
 are listed with the API error instead of being dropped.
 
+## scripts/task-bench.py
+
+A deterministic coding-task benchmark that measures **pass rate, time-to-green,
+and cost-to-green**, not merely generation speed. Every run copies a clean
+standard-library Python fixture, applies a deliberately failing task setup, runs
+a real `pi` worker, checks that protected tests were not modified, and runs the
+machine-verifiable checker in a fresh shell.
+
+```bash
+./scripts/task-bench.py --verify-only
+./scripts/task-bench.py --models github-copilot/gpt-5.4-mini --runs 1
+./scripts/task-bench.py --models zai/glm-5.3,github-copilot/gpt-5.4-mini --runs 3
+./scripts/task-bench.py --models github-copilot/gpt-5.4-mini --tasks slug-normalization,record-merge
+```
+
+Four initial tasks live in `bench/tasks/`: slug normalization, remainder-safe
+money splitting, bounded retry, and stable record merging. Results write to
+`bench/results/latest.md` plus timestamped JSON/Markdown reports (ignored by
+Git). It is intentionally a script rather than a pi extension: it needs clean
+disposable worktrees, long subprocesses, hard timeouts, and shell verification.
+
 ## Develop
 
 ```bash

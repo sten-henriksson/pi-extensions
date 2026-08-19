@@ -1,0 +1,8 @@
+{
+  "id": "record-merge",
+  "title": "Merge duplicate records without losing stable order",
+  "setup": "setup.py",
+  "verify": ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"],
+  "timeout_seconds": 600,
+  "prompt": "Fix `app/records.py` so `merge_records(records)` merges dictionaries with the same string `id`. Preserve first-seen ID order; later records override scalar fields; `tags` are a stable-order union; do not mutate input dictionaries or tag lists. Raise `ValueError` for a record missing a non-empty string id. Edit production code only; do not modify tests. Run `python3 -m unittest discover -s tests -v`."
+}
