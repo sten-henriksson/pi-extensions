@@ -19,18 +19,10 @@
  * file is also safe to symlink into ~/.pi/agent/extensions/ for every repo.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
-import {
-  Container,
-  Key,
-  SelectList,
-  Text,
-  truncateToWidth,
-  matchesKey,
-  type Component,
-  type SelectItem,
-} from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
@@ -107,14 +99,21 @@ export async function fetchBacklog(cwd: string, force = false): Promise<Backlog 
     return backlogCache.backlog;
   }
   try {
-    const [listRes, readyRes] = await Promise.all([
-      exec("bd", ["list", "--json", "--status", "open,in_progress,blocked,deferred", "-n", "0"], {
-        cwd,
-        timeout: 20_000,
-        maxBuffer: 8 * 1024 * 1024,
-      }),
-      exec("bd", ["ready", "--json", "-n", "0"], { cwd, timeout: 20_000, maxBuffer: 8 * 1024 * 1024 }),
-    ]);
+    // SEQUENTIAL on purpose: bd uses an embedded dolt database whose file
+    // lock serializes concurrent readers — running these in parallel makes
+    // both queue behind the lock (observed 20s+ on large backlogs) and can
+    // blow the timeout even though each call alone is fast. A generous
+    // timeout matters: `bd list` on a 340-issue repo takes ~10s idle.
+    const listRes = await exec(
+      "bd",
+      ["list", "--json", "--status", "open,in_progress,blocked,deferred", "-n", "0"],
+      { cwd, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 }
+    );
+    const readyRes = await exec("bd", ["ready", "--json", "-n", "0"], {
+      cwd,
+      timeout: 60_000,
+      maxBuffer: 8 * 1024 * 1024,
+    });
     const all = parseJsonArray(listRes.stdout);
     const readyIds = new Set(parseJsonArray(readyRes.stdout).map((b) => b.id));
     const backlog: Backlog = {
@@ -150,15 +149,37 @@ function prioColor(theme: ThemeLike, p: number): (s: string) => string {
 
 const pid = (b: Bead): string => `P${b.priority}`;
 
-/** One widget/panel row: `● P1 bd-a3f8 · Fix login`. */
-export function beadLine(theme: ThemeLike, b: Bead, marker = "●"): string {
+/** Widget/panel row cap for the id column — keeps titles aligned even with
+ *  absurdly long project-prefixed ids. */
+const ID_COL_CAP = 24;
+
+/** Shared status glyphs so widget and panel read the same way
+ *  (◐/○ follow bd's own legend; ready/queued split is ours):
+ *  ◐ in progress · ● ready · ○ queued · ⊘ blocked · ◇ deferred. */
+export function beadMarker(b: Bead, readyIds: Set<string>): string {
+  switch (b.status) {
+    case "in_progress":
+      return "◐";
+    case "blocked":
+      return "⊘";
+    case "deferred":
+      return "◇";
+    default:
+      return readyIds.has(b.id) ? "●" : "○";
+  }
+}
+
+/** One widget row: `▶ P0 bd-a3f8    Fix login` — id padded to idWidth so
+ *  titles line up in a column. */
+export function beadLine(theme: ThemeLike, b: Bead, marker: string, idWidth: number): string {
+  const id = truncateToWidth(b.id, idWidth, "…").padEnd(idWidth);
   return (
     prioColor(theme, b.priority)(marker) +
     " " +
     prioColor(theme, b.priority)(pid(b)) +
     " " +
-    theme.fg("dim", b.id) +
-    theme.fg("muted", " · ") +
+    theme.fg("dim", id) +
+    " " +
     b.title.replace(/[\r\n]+/g, " ")
   );
 }
@@ -183,11 +204,13 @@ export function widgetHeader(theme: ThemeLike, b: Backlog): string {
 /** Widget body lines (header + top items + tail note). */
 export function widgetLines(theme: ThemeLike, b: Backlog, maxItems = 6): string[] {
   const lines = [widgetHeader(theme, b)];
-  const items: Bead[] = [...b.active, ...b.ready, ...b.queued.slice(0, Math.max(0, maxItems - b.active.length - b.ready.length))];
+  const readyIds = new Set(b.ready.map((r) => r.id));
+  const items: Bead[] = [...b.active, ...b.ready, ...b.queued];
   const shown = items.slice(0, maxItems);
+  // Common id column width → titles align; capped so long ids truncate, not stretch.
+  const idWidth = Math.min(ID_COL_CAP, Math.max(6, ...shown.map((s) => s.id.length)));
   for (const bead of shown) {
-    const marker = bead.status === "in_progress" ? "▶" : b.ready.some((r) => r.id === bead.id) ? "●" : "○";
-    lines.push(beadLine(theme, bead, marker));
+    lines.push(beadLine(theme, bead, beadMarker(bead, readyIds), idWidth));
   }
   const rest = items.length - shown.length + b.blocked.length + b.deferred.length;
   if (rest > 0) lines.push(theme.fg("dim", `  … +${rest} more — /beads to open panel`));
@@ -201,10 +224,21 @@ export function widgetLines(theme: ThemeLike, b: Backlog, maxItems = 6): string[
 type PanelMode = "ready" | "active" | "all";
 
 const MODE_LABEL: Record<PanelMode, string> = {
-  ready: "READY",
+  ready: "ACTIVE / READY",
   active: "IN PROGRESS",
   all: "ALL OPEN",
 };
+
+const EMPTY_MSG: Record<PanelMode, string> = {
+  ready: "nothing ready to claim — backlog clear ✓",
+  active: "no in-progress beads",
+  all: "backlog clear ✓",
+};
+
+const LEGEND = "◐ active · ● ready · ○ queued · ⊘ blocked · ◇ deferred";
+const LIST_HELP = "tab mode · ↵ detail · r refresh · q/esc close";
+const MAX_VISIBLE = 15;
+const MAX_DETAIL_LINES = 40;
 
 function panelBeads(b: Backlog, mode: PanelMode): Bead[] {
   if (mode === "ready") return [...b.active, ...b.ready];
@@ -212,10 +246,17 @@ function panelBeads(b: Backlog, mode: PanelMode): Bead[] {
   return [...b.active, ...b.ready, ...b.queued, ...b.blocked, ...b.deferred];
 }
 
-export function panelItems(b: Backlog, mode: PanelMode): SelectItem[] {
+export interface PanelItem {
+  value: string;
+  label: string;
+  description: string;
+}
+
+export function panelItems(b: Backlog, mode: PanelMode): PanelItem[] {
+  const readyIds = new Set(b.ready.map((r) => r.id));
   return panelBeads(b, mode).map((bead) => ({
     value: bead.id,
-    label: `${pid(bead)} ${bead.id}`,
+    label: `${beadMarker(bead, readyIds)} ${pid(bead)} ${bead.id}`,
     description: bead.title.replace(/[\r\n]+/g, " "),
   }));
 }
@@ -238,31 +279,30 @@ export class BeadsPanel implements Component {
   private detailId?: string;
   private detailText?: string;
   private detailError = false;
-  private container = new Container();
-  private select?: SelectList;
+  private idx = 0;
   private refreshing = false;
 
   constructor(opts: PanelOpts) {
     this.opts = opts;
     this.backlog = opts.backlog;
-    this.rebuild();
   }
 
-  /** Modes cycle ready → active → all → ready. */
-  private cycleMode(): void {
-    this.mode = this.mode === "ready" ? "active" : this.mode === "active" ? "all" : "ready";
+  /** Switch filter mode, resetting the selection. */
+  private setMode(mode: PanelMode): void {
+    this.mode = mode;
     this.view = "list";
-    this.rebuild();
+    this.idx = 0;
   }
 
-  private async refresh(): Promise<void> {
+  async refresh(): Promise<void> {
     this.refreshing = true;
-    this.rebuild();
     this.opts.requestRender();
     const fresh = await this.opts.onRefresh();
     this.refreshing = false;
-    if (fresh) this.backlog = fresh;
-    this.rebuild();
+    if (fresh) {
+      this.backlog = fresh;
+      this.idx = Math.min(this.idx, Math.max(0, panelBeads(fresh, this.mode).length - 1));
+    }
     this.opts.requestRender();
   }
 
@@ -271,110 +311,139 @@ export class BeadsPanel implements Component {
     this.detailId = id;
     this.detailText = undefined;
     this.detailError = false;
-    this.rebuild();
     this.opts.requestRender();
     try {
       this.detailText = await bdShow(this.opts.cwd, id);
     } catch {
       this.detailError = true;
     }
-    this.rebuild();
     this.opts.requestRender();
   }
 
-  private modeTitle(): string {
-    const theme = this.opts.theme;
-    const beads = panelBeads(this.backlog, this.mode);
-    return (
-      theme.fg("accent", theme.bold(`◆ beads — ${MODE_LABEL[this.mode]}`)) +
-      theme.fg("muted", `  (${beads.length})`)
-    );
-  }
-
-  private rebuild(): void {
-    const theme = this.opts.theme;
-    this.container = new Container();
-    this.select = undefined;
-
-    if (this.view === "list") {
-      const items = panelItems(this.backlog, this.mode);
-      this.container.addChild(new DynamicBorder((s) => theme.fg("accent", s)));
-      const status = this.refreshing ? theme.fg("dim", "refreshing…") : this.modeTitle();
-      this.container.addChild(new Text(status, 1, 0));
-
-      const select = new SelectList(items, 15, {
-        selectedPrefix: (t) => theme.fg("accent", t),
-        selectedText: (t) => theme.fg("accent", t),
-        description: (t) => theme.fg("muted", t),
-        scrollInfo: (t) => theme.fg("dim", t),
-        noMatch: (t) => theme.fg("warning", t),
-      });
-      select.onSelect = (item) => void this.openDetail(item.value);
-      // Escape in list view closes the panel (SelectList emits onCancel).
-      select.onCancel = () => this.opts.onClose();
-      this.select = select;
-      this.container.addChild(select);
-
-      this.container.addChild(
-        new Text(theme.fg("dim", "tab filter · enter detail · r refresh · q/esc close"), 1, 0)
-      );
-      this.container.addChild(new DynamicBorder((s) => theme.fg("accent", s)));
-    } else {
-      this.container.addChild(new DynamicBorder((s) => theme.fg("accent", s)));
-      this.container.addChild(
-        new Text(
-          theme.fg("accent", theme.bold(`◆ ${this.detailId ?? ""}`)) + theme.fg("dim", "  (esc back)"),
-          1,
-          0
-        )
-      );
-      let body: string;
-      if (this.detailError) {
-        body = theme.fg("error", "`bd show` failed");
-      } else if (this.detailText === undefined) {
-        body = theme.fg("dim", "loading…");
-      } else {
-        body = this.detailText;
-      }
-      // Cap very long audit trails; the overlay clips anyway.
-      const lines = body.split("\n");
-      const capped =
-        lines.length > 40 ? lines.slice(0, 40).join("\n") + `\n… +${lines.length - 40} more lines` : body;
-      this.container.addChild(new Text(capped, 1, 0));
-      this.container.addChild(new DynamicBorder((s) => theme.fg("accent", s)));
-    }
+  /** ANSI-aware: clip to the inner width and pad, so every row spans the box. */
+  private row(content: string, inner: number, border: (s: string) => string): string {
+    const clipped = visibleWidth(content) > inner ? truncateToWidth(content, inner, "…") : content;
+    const pad = " ".repeat(Math.max(0, inner - visibleWidth(clipped)));
+    return border("│ ") + clipped + pad + border(" │");
   }
 
   render(width: number): string[] {
-    return this.container.render(width).map((line) => truncateToWidth(line, width, "…"));
+    const t = this.opts.theme;
+    const border = (s: string) => t.fg("border", s);
+    const inner = Math.max(12, width - 4);
+    const lines: string[] = [];
+
+    // Top border with the title embedded, window style: ┌─ title ──┐
+    const plainTitle =
+      this.view === "detail"
+        ? `◆ ${this.detailId ?? ""}`
+        : this.refreshing
+          ? "◆ beads — refreshing…"
+          : `◆ beads — ${MODE_LABEL[this.mode]} (${panelBeads(this.backlog, this.mode).length})`;
+    const tw = visibleWidth(plainTitle);
+    if (tw + 2 <= inner) {
+      lines.push(
+        border("┌─ ") + t.fg("accent", t.bold(plainTitle)) + border(` ${"─".repeat(inner - tw - 1)}┐`)
+      );
+    } else {
+      lines.push(border(`┌${"─".repeat(inner + 2)}┐`));
+      lines.push(this.row(t.fg("accent", t.bold(plainTitle)), inner, border));
+    }
+    lines.push(this.row("", inner, border));
+
+    if (this.view === "detail") this.renderDetail(lines, inner, border);
+    else this.renderList(lines, inner, border);
+
+    lines.push(border(`└${"─".repeat(inner + 2)}┘`));
+    return lines;
+  }
+
+  private renderList(lines: string[], inner: number, border: (s: string) => string): void {
+    const t = this.opts.theme;
+    const beads = panelBeads(this.backlog, this.mode);
+    if (beads.length === 0) {
+      lines.push(this.row(t.fg("dim", EMPTY_MSG[this.mode]), inner, border));
+    } else {
+      // idWidth from ALL beads in the mode, so the title column stays put
+      // while scrolling the window.
+      const readyIds = new Set(this.backlog.ready.map((r) => r.id));
+      const idWidth = Math.min(ID_COL_CAP, Math.max(6, ...beads.map((b) => b.id.length)));
+      const start = Math.max(
+        0,
+        Math.min(this.idx - Math.floor(MAX_VISIBLE / 2), beads.length - MAX_VISIBLE)
+      );
+      const end = Math.min(start + MAX_VISIBLE, beads.length);
+      for (let i = start; i < end; i++) {
+        const bead = beads[i]!;
+        const selected = i === this.idx;
+        const pc = prioColor(t, bead.priority);
+        const id = truncateToWidth(bead.id, idWidth, "…").padEnd(idWidth);
+        const head =
+          (selected ? t.fg("accent", "❯ ") : "  ") +
+          pc(beadMarker(bead, readyIds)) +
+          " " +
+          pc(pid(bead)) +
+          " " +
+          t.fg("dim", id) +
+          " ";
+        const titleText = bead.title.replace(/[\r\n]+/g, " ");
+        lines.push(
+          this.row(head + (selected ? t.bold(titleText) : t.fg("muted", titleText)), inner, border)
+        );
+      }
+      if (start > 0 || end < beads.length) {
+        lines.push(this.row(t.fg("dim", `(${this.idx + 1}/${beads.length})`), inner, border));
+      }
+    }
+    lines.push(this.row(t.fg("dim", LEGEND), inner, border));
+    lines.push(this.row(t.fg("dim", LIST_HELP), inner, border));
+  }
+
+  private renderDetail(lines: string[], inner: number, border: (s: string) => string): void {
+    const t = this.opts.theme;
+    if (this.detailError) {
+      lines.push(this.row(t.fg("error", "`bd show` failed"), inner, border));
+    } else if (this.detailText === undefined) {
+      lines.push(this.row(t.fg("dim", "loading…"), inner, border));
+    } else {
+      // Truncate per line, never wrap: `bd show` aligns its own columns and
+      // word-wrapping shreds that alignment in a narrow panel.
+      const all = this.detailText.split("\n");
+      for (const line of all.slice(0, MAX_DETAIL_LINES)) lines.push(this.row(line, inner, border));
+      if (all.length > MAX_DETAIL_LINES) {
+        lines.push(
+          this.row(t.fg("dim", `… +${all.length - MAX_DETAIL_LINES} more lines`), inner, border)
+        );
+      }
+    }
+    lines.push(this.row(t.fg("dim", "esc back · q close"), inner, border));
   }
 
   invalidate(): void {
-    this.container.invalidate();
+    // No cached render state.
   }
 
   handleInput(data: string): void {
     if (this.view === "detail") {
-      if (matchesKey(data, Key.escape) || matchesKey(data, Key.backspace)) {
-        this.view = "list";
-        this.rebuild();
-      }
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.backspace)) this.view = "list";
+      else if (data === "q" || matchesKey(data, Key.ctrl("c"))) this.opts.onClose();
       return; // swallow everything else while reading detail
     }
+    const beads = panelBeads(this.backlog, this.mode);
     if (matchesKey(data, Key.tab)) {
-      this.cycleMode();
+      this.setMode(this.mode === "ready" ? "active" : this.mode === "active" ? "all" : "ready");
     } else if (matchesKey(data, Key.shift(Key.tab))) {
-      this.mode = this.mode === "ready" ? "all" : this.mode === "all" ? "active" : "ready";
-      this.rebuild();
+      this.setMode(this.mode === "ready" ? "all" : this.mode === "all" ? "active" : "ready");
+    } else if (beads.length > 0 && (matchesKey(data, Key.down) || data === "j")) {
+      this.idx = (this.idx + 1) % beads.length;
+    } else if (beads.length > 0 && (matchesKey(data, Key.up) || data === "k")) {
+      this.idx = (this.idx - 1 + beads.length) % beads.length;
+    } else if (beads.length > 0 && matchesKey(data, Key.enter)) {
+      void this.openDetail(beads[this.idx]!.id);
     } else if (data === "r") {
       void this.refresh();
-    } else if (data === "q") {
+    } else if (data === "q" || matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) {
       this.opts.onClose();
-    } else if (data === "j" || data === "k") {
-      // Translate vim keys to the arrows SelectList understands natively.
-      this.select?.handleInput(data === "j" ? "\x1b[B" : "\x1b[A");
-    } else {
-      this.select?.handleInput(data);
     }
   }
 }
@@ -382,6 +451,13 @@ export class BeadsPanel implements Component {
 /* ------------------------------------------------------------------ */
 /* Prime context injection (unchanged behaviour)                       */
 /* ------------------------------------------------------------------ */
+
+/** Cheap filesystem probe — `.beads/` marks a bd workspace (bd init creates
+ *  it in the repo root). Used to tell "no beads repo here" (no widget) from
+ *  "beads repo but bd failed/timed out" (visible diagnostic widget). */
+function beadsRepoExists(cwd: string): boolean {
+  return existsSync(join(cwd, ".beads"));
+}
 
 /** Runs `bd prime` in cwd. Returns undefined when bd/workspace is absent. */
 async function bdPrime(cwd: string): Promise<string | undefined> {
@@ -411,11 +487,24 @@ function primeActive(ctx: ExtensionContext): boolean {
 /* ------------------------------------------------------------------ */
 
 /** Re-render (or clear) the persistent backlog widget above the editor. */
-async function updateWidget(ctx: ExtensionContext): Promise<void> {
+async function updateWidget(ctx: ExtensionContext, force = false): Promise<void> {
   if (!ctx.hasUI) return;
-  const backlog = await fetchBacklog(ctx.cwd);
+  const backlog = await fetchBacklog(ctx.cwd, force);
   if (!backlog) {
-    ctx.ui.setWidget(WIDGET_ID, undefined);
+    // Distinguish "no beads here" from "bd too slow / failed": bd missing or
+    // no workspace is a normal state for most repos (no widget), but a
+    // timeout in a real beads repo should be visible, not silent.
+    if (beadsRepoExists(ctx.cwd)) {
+      ctx.ui.setWidget(WIDGET_ID, (_tui, theme) => {
+        const line = theme.fg("dim", "◆ beads — `bd` timed out or failed — /beads refresh");
+        return {
+          render: (width: number) => [truncateToWidth(line, width, "…")],
+          invalidate: () => {},
+        };
+      });
+    } else {
+      ctx.ui.setWidget(WIDGET_ID, undefined);
+    }
     return;
   }
   const maxItems = Number.parseInt(process.env.PI_BEADS_WIDGET_ROWS ?? "", 10) || 6;
@@ -428,29 +517,39 @@ async function updateWidget(ctx: ExtensionContext): Promise<void> {
   });
 }
 
-/** Open the overlay side panel; refreshes backlog data afterwards. */
+/** Open the overlay side panel. Opens immediately with cached data (or a
+ *  loading state) and refreshes in the background — on slow dolt-backed
+ *  repos a forced fetch can take 15-30s, which would otherwise freeze the
+ *  command with zero feedback. */
 async function openPanel(ctx: ExtensionContext): Promise<void> {
-  const backlog = await fetchBacklog(ctx.cwd, true);
-  if (!backlog) {
+  const cached = await fetchBacklog(ctx.cwd); // cache hit is instant
+  if (!cached && !beadsRepoExists(ctx.cwd)) {
     if (ctx.hasUI) ctx.ui.notify("No Beads workspace found (`bd` failed).", "error");
     return;
   }
+  const initial: Backlog =
+    cached ?? { ready: [], active: [], queued: [], blocked: [], deferred: [] };
   await ctx.ui.custom<null>(
-    (tui, theme, _kb, done) =>
-      new BeadsPanel({
+    (tui, theme, _kb, done) => {
+      const panel = new BeadsPanel({
         theme: theme as unknown as ThemeLike,
         cwd: ctx.cwd,
-        backlog,
+        backlog: initial,
         requestRender: () => tui.requestRender(),
         onClose: () => done(null),
         onRefresh: () => fetchBacklog(ctx.cwd, true),
-      }),
+      });
+      // No cache → kick a background refresh so the panel shows live data
+      // as soon as bd answers (panel renders its own "refreshing…" state).
+      if (!cached) setTimeout(() => void panel.refresh(), 0);
+      return panel;
+    },
     {
       overlay: true,
       overlayOptions: {
         anchor: "right-center",
-        width: "45%",
-        minWidth: 44,
+        width: "48%",
+        minWidth: 48,
         maxHeight: "80%",
         margin: 1,
       },
@@ -474,8 +573,9 @@ export default function (pi: ExtensionAPI) {
   });
 
   // The agent may have claimed/closed beads during the turn — re-sync.
+  // Force: the 15s cache would otherwise mask changes from a quick turn.
   pi.on("agent_settled", async (_event, ctx) => {
-    void updateWidget(ctx);
+    void updateWidget(ctx, true);
   });
 
   pi.on("session_shutdown", () => {

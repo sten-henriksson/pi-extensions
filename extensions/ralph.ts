@@ -877,7 +877,23 @@ Examples:
 
 		const iterStr = `${state.iteration}${state.maxIterations > 0 ? `/${state.maxIterations}` : ""}`;
 
-		let instructions = `You are in a Ralph loop working on: ${state.taskFile}\n`;
+		// Sticky goals: the queued iteration prompt (full task text) is
+		// conversation-side and gets compacted away; this per-turn system-prompt
+		// injection re-reads the task file so the goals survive compaction and
+		// pick up live edits. Same pattern as mimo-memory's MEMORY.md injection.
+		const taskPath = path.resolve(ctx.cwd, state.taskFile);
+		let taskContent = "(task file unreadable — re-read it before working)";
+		try {
+			taskContent = fs.readFileSync(taskPath, "utf-8").slice(0, 6000);
+			if (fs.readFileSync(taskPath, "utf-8").length > 6000) {
+				taskContent += "\n…(truncated — read the full task file for the remainder)";
+			}
+		} catch {
+			/* keep the placeholder */
+		}
+
+		let instructions = `You are in a Ralph loop. Task file: ${state.taskFile}\n`;
+		instructions += `## Current Task (injected fresh each turn)\n\n${taskContent}\n\n`;
 		instructions += `- Before doing work, reload .ralph/${state.name}.state.json; if status is completed, ignore this stale prompt and do not call ralph_done\n`;
 		if (state.itemsPerIteration > 0) {
 			instructions += `- Work on ~${state.itemsPerIteration} items this iteration\n`;
