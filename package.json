@@ -1,10 +1,17 @@
 {
   "name": "pi-extensions",
   "version": "0.1.0",
-  "description": "Coding-agent extensions for pi: background jobs with completion notifications, bd (beads) issue-tracker context injection, mimo-memory (/dream + /distill cross-session memory & skill distillation), and ralph (looped autonomous work with independent completion verification).",
+  "description": "Coding-agent extensions for pi: reusable browser workflow graphs, background jobs, beads context, cross-session memory, and verified autonomous loops.",
   "keywords": ["pi-package"],
   "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
   }
 }

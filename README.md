@@ -4,10 +4,29 @@ Extensions for [pi](https://npmjs.com/package/@earendil-works/pi-coding-agent), 
 
 | Extension | What it does |
 |---|---|
+| **browser-flows** (`browser_action` / `browser_flow`, `/flow`, `browser-flows` skill) | Records agent-browser actions as versioned workflow graphs, replays documented paths with compact results, supports branches/checkpoints and targeted repair artifacts, and preserves structured path knowledge (purpose, usage, prerequisites, outcomes, tags). Credentials and captured site data are not packaged; each user's flows stay under `~/.pi/agent/browser-flows/`. |
 | **background-jobs** (`bg_run` / `bg_wait` / `bg_logs` / `bg_list` / `bg_kill`, `/bg`) | First-class background jobs for agents: start long commands detached, get job ids + logs, bounded waits that treat timeouts as *not an error*, whole-process-tree kills, and **automatic completion notifications** injected into the conversation (exit code + tail), with restart re-attach via pid probe + exit-code sentinels. |
 | **beads** (`/beads`, `/beads refresh`) | Injects `bd prime` workflow context on session start (deduped, re-armed after compaction) — the pi equivalent of the Claude Code / Codex hooks a bd repo already carries. Plus a backlog display: a persistent widget above the editor (in-progress → ready → queued, priority-colored) and `/beads` opening an overlay side panel (Tab cycles ready/in-progress/all-open, Enter shows `bd show` detail, `r` refreshes, j/k navigate). Auto-resyncs after each agent turn. No-op in repos without bd. |
 | **mimo-memory** (`/dream`, `/distill`) | Cross-session memory & skill distillation, ported from Xiaomi MiMo Code's Evolution theme. `/dream` consolidates session traces into an injectable `MEMORY.md` (map-reduce, mtime-keyed cache, review gate); `/distill` mines repeated workflows, counts occurrences in code, gates on frequency + safety, and stages candidate skills — nothing auto-installed. |
 | **ralph** (`/ralph`, `ralph_start`/`ralph_done`) | Long-running agent loops (fork of tmustier/pi-ralph-wiggum, MIT) with an **independent completion verifier**: the completion marker is a claim, not a verdict — a judge model (`.ralph/judge.json`, ideally a different model) reviews the task file's verification record before the loop may complete; rejected claims re-prompt with reasons (max 3). |
+
+## browser-flows
+
+Browser flows turn repeated `agent-browser` work into local, documented workflow graphs instead of spending model tokens rediscovering the same route. The package provides two tools:
+
+- `browser_action` runs one `agent-browser` command and records it when recording is active.
+- `browser_flow` lists, records, documents, branches, replays, and repairs flows.
+
+```text
+/flow list
+/flow record admin-settings
+/flow stop settings-page
+/flow run admin-settings settings-page
+```
+
+Use `/skill:browser-flows ...` to force the bundled skill for agent-driven recording or repair. Flow files, revision history, active recording state, failure snapshots, and screenshots are created locally under `~/.pi/agent/browser-flows/` and are never part of this package. Passwords, cookies, tokens, and session state must not be recorded; value-entry actions are opt-in while recording. `agent-browser` must be available on `PATH`.
+
+The graph format supports shared prefixes and guarded branches, so authenticated navigation can be reused by multiple destinations. Structured flow/checkpoint documentation lets agents discover a saved path by purpose and tags before inspecting its implementation.
 
 ## Why background-jobs exists
 
@@ -88,4 +107,4 @@ pi -e . -p 'bg_run …'   # live-test against the working tree
 bash test/e2e.sh        # full battery (uses ~7 model calls; see header)
 ```
 
-Layout: `extensions/*.ts` are auto-loaded (`package.json` → `pi.extensions`). Each extension is a single self-contained file with zero npm dependencies (node builtins + pi/typebox peers only).
+Layout: `extensions/*.ts` and extension subdirectories are auto-loaded (`package.json` → `pi.extensions`); bundled skills live under `skills/`. Most extensions are single files, while browser-flows is split into focused modules. Runtime code uses only Node builtins and Pi/typebox peers.
