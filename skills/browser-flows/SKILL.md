@@ -93,6 +93,14 @@ A failed replay writes a compact interactive snapshot and screenshot under `~/.p
 - Pause for user login, MFA, CAPTCHA, or account consent when necessary.
 - Prefer a checkpoint immediately before any externally visible side effect.
 
+## Import, export, and private-repo sync
+
+Use `browser_flow export` to create a sanitized, portable JSON file. Export always strips flow-level browser/profile/session arguments and refuses commands or documentation that may contain credentials, entered values, personal paths, email addresses, URL query values, page-evaluation data, or local file paths. Always review the resulting JSON before sharing or committing it.
+
+Use `browser_flow import` to validate and copy a sanitized JSON flow into local storage. Import strips browser arguments again, refuses unsafe content, and does not overwrite an existing flow unless `overwrite: true` is explicit. Configure machine-local `browserArgs` after import when required.
+
+Do not copy `artifacts/`, `revisions/`, `.recording.json`, screenshots, or browser state into a shared repository. For a private flow repository, track only reviewed exported `*.json` files and ignore runtime data.
+
 ## Storage
 
 Flows are versioned JSON graphs in `~/.pi/agent/browser-flows/`; no graph database is needed. Previous revisions and failure artifacts are kept in subdirectories. Prefer the extension tools over editing a live graph while recording.

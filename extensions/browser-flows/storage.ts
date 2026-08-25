@@ -65,6 +65,61 @@ export async function listFlows(): Promise<Array<{
 	return result.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export function parseFlow(raw: string, expectedName?: string): BrowserFlow {
+	let flow: BrowserFlow;
+	try {
+		flow = JSON.parse(raw) as BrowserFlow;
+	} catch (error) {
+		throw new Error(`Invalid browser flow JSON: ${error instanceof Error ? error.message : String(error)}`);
+	}
+	const displayName = expectedName ?? flow?.name ?? "<unknown>";
+	if (flow?.schemaVersion !== 1 || !flow.nodes || typeof flow.nodes !== "object" || Array.isArray(flow.nodes)) {
+		throw new Error(`Unsupported or invalid browser flow: ${displayName}`);
+	}
+	flow.name = validateName(expectedName ?? flow.name);
+	const safeNodes: BrowserFlow["nodes"] = Object.create(null);
+	for (const [id, node] of Object.entries(flow.nodes)) {
+		if (!node || node.id !== id || !Array.isArray(node.args) || !node.args.every((arg) => typeof arg === "string") || !Array.isArray(node.edges)) {
+			throw new Error(`Invalid node ${id} in browser flow ${displayName}`);
+		}
+		if (node.args.length > 0 && node.sideEffect === undefined) {
+			throw new Error(`Missing sideEffect classification in executable node ${id} of browser flow ${displayName}`);
+		}
+		if (node.sideEffect !== undefined && !["none", "mutation", "irreversible"].includes(node.sideEffect)) {
+			throw new Error(`Invalid sideEffect in node ${id} of browser flow ${displayName}`);
+		}
+		if (node.optional !== undefined && typeof node.optional !== "boolean") throw new Error(`Invalid optional flag in node ${id}`);
+		if (node.optional && node.sideEffect && node.sideEffect !== "none") throw new Error(`Side-effecting node ${id} cannot be optional`);
+		if (node.expect !== undefined && (
+			typeof node.expect !== "object" ||
+			(node.expect.urlGlob !== undefined && typeof node.expect.urlGlob !== "string") ||
+			(node.expect.visibleText !== undefined && typeof node.expect.visibleText !== "string")
+		)) throw new Error(`Invalid expectation in node ${id} of browser flow ${displayName}`);
+		for (const edge of node.edges) {
+			if (!edge || typeof edge.to !== "string") throw new Error(`Invalid edge in node ${id} of browser flow ${displayName}`);
+			if (edge.when !== undefined) {
+				if (edge.when.type === "url" && typeof edge.when.glob !== "string") throw new Error(`Invalid URL edge in node ${id}`);
+				if (edge.when.type === "target" && typeof edge.when.equals !== "string") throw new Error(`Invalid target edge in node ${id}`);
+				if (!["always", "url", "target"].includes(edge.when.type)) throw new Error(`Invalid edge condition in node ${id}`);
+			}
+		}
+		safeNodes[id] = node;
+	}
+	flow.nodes = safeNodes;
+	for (const node of Object.values(flow.nodes)) {
+		for (const edge of node.edges) if (!Object.hasOwn(flow.nodes, edge.to)) {
+			throw new Error(`Edge from ${node.id} points to missing node ${edge.to} in browser flow ${displayName}`);
+		}
+	}
+	if (!Array.isArray(flow.browserArgs) || !flow.browserArgs.every((arg) => typeof arg === "string")) {
+		throw new Error(`Invalid browserArgs in browser flow ${displayName}`);
+	}
+	if (flow.entry !== undefined && (typeof flow.entry !== "string" || !Object.hasOwn(flow.nodes, flow.entry))) {
+		throw new Error(`Invalid entry node in browser flow ${displayName}`);
+	}
+	return flow;
+}
+
 export async function loadFlow(name: string): Promise<BrowserFlow> {
 	const path = flowPath(name);
 	let raw: string;
@@ -73,23 +128,7 @@ export async function loadFlow(name: string): Promise<BrowserFlow> {
 	} catch {
 		throw new Error(`Browser flow not found: ${validateName(name)}`);
 	}
-	const flow = JSON.parse(raw) as BrowserFlow;
-	if (flow.schemaVersion !== 1 || !flow.nodes || typeof flow.nodes !== "object" || Array.isArray(flow.nodes)) {
-		throw new Error(`Unsupported or invalid browser flow: ${name}`);
-	}
-	flow.name = validateName(name);
-	const safeNodes: BrowserFlow["nodes"] = Object.create(null);
-	for (const [id, node] of Object.entries(flow.nodes)) {
-		if (!node || node.id !== id || !Array.isArray(node.args) || !node.args.every((arg) => typeof arg === "string") || !Array.isArray(node.edges)) {
-			throw new Error(`Invalid node ${id} in browser flow ${name}`);
-		}
-		safeNodes[id] = node;
-	}
-	flow.nodes = safeNodes;
-	if (!Array.isArray(flow.browserArgs) || !flow.browserArgs.every((arg) => typeof arg === "string")) {
-		throw new Error(`Invalid browserArgs in browser flow ${name}`);
-	}
-	return flow;
+	return parseFlow(raw, name);
 }
 
 export function createFlow(name: string, description?: string, browserArgs: string[] = []): BrowserFlow {

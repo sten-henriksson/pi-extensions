@@ -15,16 +15,20 @@ Extensions for [pi](https://npmjs.com/package/@earendil-works/pi-coding-agent), 
 Browser flows turn repeated `agent-browser` work into local, documented workflow graphs instead of spending model tokens rediscovering the same route. The package provides two tools:
 
 - `browser_action` runs one `agent-browser` command and records it when recording is active.
-- `browser_flow` lists, records, documents, branches, replays, and repairs flows.
+- `browser_flow` lists, records, documents, branches, replays, repairs, imports, and exports flows.
 
 ```text
 /flow list
 /flow record admin-settings
 /flow stop settings-page
 /flow run admin-settings settings-page
+/flow export admin-settings ./reviewed-flows/
+/flow import ./reviewed-flows/admin-settings.json
 ```
 
 Use `/skill:browser-flows ...` to force the bundled skill for agent-driven recording or repair. Flow files, revision history, active recording state, failure snapshots, and screenshots are created locally under `~/.pi/agent/browser-flows/` and are never part of this package. Passwords, cookies, tokens, and session state must not be recorded; value-entry actions are opt-in while recording. `agent-browser` must be available on `PATH`.
+
+Export creates a portable JSON copy, always removes browser/profile/session arguments, and refuses commands or documentation that look private (credentials, entered values, email addresses, user paths, URL query values, eval/storage/auth data, or local file paths). Import validates the graph, applies the same safety scan, strips browser arguments again, and refuses implicit overwrite. Review exports before committing them to a private flow repository; never sync runtime artifacts or browser state.
 
 The graph format supports shared prefixes and guarded branches, so authenticated navigation can be reused by multiple destinations. Structured flow/checkpoint documentation lets agents discover a saved path by purpose and tags before inspecting its implementation.
 

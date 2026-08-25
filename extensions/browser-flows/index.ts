@@ -1,10 +1,12 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { withFileMutationQueue, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { BrowserFlow, EdgeCondition, Expectation, FlowNode, PathDocumentation, RecordingState, SideEffect } from "./types.ts";
 import { AgentBrowser, runFlow } from "./runner.ts";
-import { createFlow, FLOW_HOME, flowPath, listFlows, loadFlow, loadRecording, saveFlow, saveRecording, validateName } from "./storage.ts";
+import { createFlow, FLOW_HOME, flowPath, listFlows, loadFlow, loadRecording, parseFlow, saveFlow, saveRecording, validateName } from "./storage.ts";
 import { existsSync } from "node:fs";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 let recording: RecordingState | undefined;
@@ -206,6 +208,99 @@ function recordingRisk(args: string[]): { blocked: boolean; optIn: boolean; reas
 	return { blocked: false, optIn: false };
 }
 
+function transferSafetyFindings(flow: BrowserFlow): string[] {
+	const findings: string[] = [];
+	for (const node of Object.values(flow.nodes)) {
+		if (node.args.length === 0) continue; // Pure checkpoints contain no command data.
+		const risk = recordingRisk(node.args);
+		if (risk.blocked || risk.optIn) findings.push(`${node.id}: ${risk.reason ?? "command may contain private data"}`);
+	}
+	// Scan the entire whitelisted transfer object, including expectations,
+	// checkpoints and edge labels—not only documentation fields.
+	const text = JSON.stringify(flow);
+	const patterns: Array<[string, RegExp]> = [
+		["email address", /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i],
+		["Windows user path", /[A-Z]:\\Users\\[^\\\s]+/i],
+		["Unix home path", /\/(?:home|Users)\/[^/\s]+/],
+		["credential-like assignment", /(?:password|passwd|token|secret|authorization|cookie)\s*[:=]\s*[^,}\s]+/i],
+	];
+	for (const [label, pattern] of patterns) if (pattern.test(text)) findings.push(`documentation contains a possible ${label}`);
+	return findings;
+}
+
+function sanitizedTransferFlow(flow: BrowserFlow): { flow: BrowserFlow; strippedBrowserArgs: number } {
+	const strippedBrowserArgs = flow.browserArgs.length;
+	const nodes: BrowserFlow["nodes"] = Object.create(null);
+	for (const node of Object.values(flow.nodes)) {
+		nodes[node.id] = {
+			id: node.id,
+			label: node.label,
+			documentation: node.documentation,
+			note: node.note,
+			args: [...node.args],
+			expect: node.expect ? { ...node.expect } : undefined,
+			checkpoint: node.checkpoint,
+			sideEffect: node.sideEffect,
+			optional: node.optional,
+			unstable: node.unstable,
+			edges: node.edges.map((edge) => ({
+				to: edge.to,
+				when: edge.when ? { ...edge.when } : undefined,
+				label: edge.label,
+			})),
+		};
+	}
+	// Explicit whitelist: unknown imported properties can never round-trip.
+	const exported: BrowserFlow = {
+		schemaVersion: 1,
+		name: flow.name,
+		description: flow.description,
+		documentation: flow.documentation,
+		createdAt: flow.createdAt,
+		updatedAt: new Date().toISOString(),
+		revision: 0,
+		browserArgs: [],
+		memos: flow.memos?.map((memo) => ({ ...memo })),
+		entry: flow.entry,
+		nodes,
+	};
+	const findings = transferSafetyFindings(exported);
+	if (findings.length > 0) {
+		throw new Error(`Refusing to transfer flow until possible private data is removed:\n- ${findings.join("\n- ")}`);
+	}
+	return { flow: parseFlow(JSON.stringify(exported)), strippedBrowserArgs };
+}
+
+function normalizeToolPath(path: string, cwd: string): string {
+	const clean = path.startsWith("@") ? path.slice(1) : path;
+	return resolve(cwd, clean);
+}
+
+function isInside(path: string, parent: string): boolean {
+	const rel = relative(resolve(parent), resolve(path));
+	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function assertTransferPath(path: string, cwd: string, allowOutsideCwd: boolean | undefined, operation: "import" | "export"): void {
+	if (!allowOutsideCwd && !isInside(path, cwd)) {
+		throw new Error(`${operation} path is outside Pi cwd; set allowOutsideCwd=true only after reviewing the absolute path`);
+	}
+	if (operation === "export" && isInside(path, FLOW_HOME)) {
+		throw new Error("Export destination cannot be inside live browser-flow storage; export to a separate review/repository directory");
+	}
+}
+
+async function exportDestination(path: string, flowName: string, cwd: string): Promise<string> {
+	const absolute = normalizeToolPath(path, cwd);
+	if (extname(absolute).toLowerCase() === ".json") return absolute;
+	try {
+		if ((await stat(absolute)).isFile()) throw new Error(`Export destination is a file without a .json extension: ${absolute}`);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	return join(absolute, `${flowName}.json`);
+}
+
 function textResult(text: string, details: unknown = {}) {
 	return { content: [{ type: "text" as const, text }], details };
 }
@@ -270,8 +365,9 @@ export default function browserFlowsExtension(pi: ExtensionAPI) {
 			"Do not set allowIrreversible unless the user explicitly approved the side effect.",
 		],
 		parameters: Type.Object({
-			operation: StringEnum(["list", "show", "start_recording", "stop_recording", "cancel_recording", "run", "update_node", "add_edge", "remove_edge", "document", "remove_document", "add_note", "remove_note", "set_entry"] as const),
-			name: Type.Optional(Type.String()),
+			operation: StringEnum(["list", "show", "export", "import", "start_recording", "stop_recording", "cancel_recording", "run", "update_node", "add_edge", "remove_edge", "document", "remove_document", "add_note", "remove_note", "set_entry"] as const),
+			name: Type.Optional(Type.String({ description: "Flow name; optional on import to keep the name inside the file" })),
+			path: Type.Optional(Type.String({ description: "Export destination file/directory or import source JSON file, relative to Pi cwd unless absolute" })),
 			description: Type.Optional(Type.String()),
 			from: Type.Optional(Type.String({ description: "Existing node ID or checkpoint from which to add a branch" })),
 			branchTarget: Type.Optional(Type.String({ description: "Required when adding another branch from a node that already has an outgoing path; used as the first edge's target guard" })),
@@ -279,6 +375,7 @@ export default function browserFlowsExtension(pi: ExtensionAPI) {
 			checkpoint: Type.Optional(Type.String()),
 			browserArgs: Type.Optional(Type.Array(Type.String())),
 			overwrite: Type.Optional(Type.Boolean()),
+			allowOutsideCwd: Type.Optional(Type.Boolean({ description: "Permit an explicit import/export path outside Pi cwd after reviewing it" })),
 			allowIrreversible: Type.Optional(Type.Boolean()),
 			node: Type.Optional(Type.String({ description: "Node ID or checkpoint to update, link, or set as entry" })),
 			to: Type.Optional(Type.String({ description: "Destination node ID or checkpoint for add_edge" })),
@@ -300,7 +397,7 @@ export default function browserFlowsExtension(pi: ExtensionAPI) {
 			condition: Type.Optional(StringEnum(["always", "url", "target"] as const)),
 			conditionValue: Type.Optional(Type.String()),
 		}),
-		async execute(_id, params, signal) {
+		async execute(_id, params, signal, _onUpdate, ctx) {
 			return serial(async () => {
 				switch (params.operation) {
 					case "list": {
@@ -311,6 +408,45 @@ export default function browserFlowsExtension(pi: ExtensionAPI) {
 						if (!params.name) throw new Error("show requires name");
 						const flow = await loadFlow(params.name);
 						return textResult(JSON.stringify(conciseFlow(flow), null, 2), { flow: conciseFlow(flow) });
+					}
+					case "export": {
+						if (!params.name || !params.path) throw new Error("export requires name and path");
+						if (recording) throw new Error("Stop or cancel the active recording before exporting");
+						const source = await loadFlow(params.name);
+						const { flow, strippedBrowserArgs } = sanitizedTransferFlow(source);
+						const destination = await exportDestination(params.path, flow.name, ctx.cwd);
+						assertTransferPath(destination, ctx.cwd, params.allowOutsideCwd, "export");
+						await withFileMutationQueue(destination, async () => {
+							if (existsSync(destination) && !params.overwrite) throw new Error(`Export already exists: ${destination}; set overwrite=true to replace it`);
+							await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+							const temp = `${destination}.${process.pid}.${Date.now()}.tmp`;
+							await writeFile(temp, `${JSON.stringify(flow, null, 2)}\n`, { mode: 0o600 });
+							await rename(temp, destination);
+						});
+						return textResult(`Exported sanitized flow ${flow.name} to ${destination}. Browser/session arguments stripped: ${strippedBrowserArgs}. Review the JSON before sharing or committing.`, { path: destination, name: flow.name, strippedBrowserArgs, reviewRequired: true });
+					}
+					case "import": {
+						if (!params.path) throw new Error("import requires path");
+						if (recording) throw new Error("Stop or cancel the active recording before importing");
+						const sourcePath = normalizeToolPath(params.path, ctx.cwd);
+						assertTransferPath(sourcePath, ctx.cwd, params.allowOutsideCwd, "import");
+						const raw = await readFile(sourcePath, "utf8");
+						const parsed = parseFlow(raw, params.name);
+						const { flow, strippedBrowserArgs } = sanitizedTransferFlow(parsed);
+						const destination = flowPath(flow.name);
+						let preservedLocalBrowserArgs = 0;
+						await withFileMutationQueue(destination, async () => {
+							if (existsSync(destination)) {
+								if (!params.overwrite) throw new Error(`Flow ${flow.name} already exists; set overwrite=true to import over it`);
+								const old = await loadFlow(flow.name);
+								flow.revision = old.revision;
+								flow.createdAt = old.createdAt;
+								flow.browserArgs = [...old.browserArgs]; // machine-local; never sourced from the transfer file
+								preservedLocalBrowserArgs = old.browserArgs.length;
+							}
+							await saveFlow(flow, true);
+						});
+						return textResult(`Imported sanitized flow ${flow.name} from ${sourcePath}. Incoming browser/session arguments stripped: ${strippedBrowserArgs}.${preservedLocalBrowserArgs ? ` Preserved ${preservedLocalBrowserArgs} existing local browser arguments.` : " Configure local browserArgs before replay if needed."}`, { path: sourcePath, name: flow.name, strippedBrowserArgs, preservedLocalBrowserArgs });
 					}
 					case "start_recording": {
 						if (!params.name) throw new Error("start_recording requires name");
@@ -465,7 +601,7 @@ export default function browserFlowsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("flow", {
-		description: "Browser flow: list | show | record | stop | cancel | run | doc",
+		description: "Browser flow: list | show | export | import | record | stop | cancel | run | doc",
 		handler: async (raw, ctx) => {
 			const parts = raw.trim().split(/\s+/).filter(Boolean);
 			const [command = "list", name, extra] = parts;
@@ -476,6 +612,36 @@ export default function browserFlowsExtension(pi: ExtensionAPI) {
 				} else if (command === "show" && name) {
 					const flow = await loadFlow(name);
 					ctx.ui.notify(`${flow.name}: ${Object.keys(flow.nodes).length} nodes, revision ${flow.revision}\n${FLOW_HOME}/${flow.name}.json`, "info");
+				} else if (command === "export" && name && extra) {
+					await serial(async () => {
+						if (recording) throw new Error("Stop or cancel the active recording before exporting");
+						const source = await loadFlow(name);
+						const { flow, strippedBrowserArgs } = sanitizedTransferFlow(source);
+						const destination = await exportDestination(extra, flow.name, ctx.cwd);
+						assertTransferPath(destination, ctx.cwd, false, "export");
+						await withFileMutationQueue(destination, async () => {
+							if (existsSync(destination)) throw new Error(`Export already exists: ${destination}`);
+							await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+							const temp = `${destination}.${process.pid}.${Date.now()}.tmp`;
+							await writeFile(temp, `${JSON.stringify(flow, null, 2)}\n`, { mode: 0o600 });
+							await rename(temp, destination);
+						});
+						ctx.ui.notify(`Exported ${flow.name} to ${destination}; stripped ${strippedBrowserArgs} browser arguments. Review before sharing.`, "info");
+					});
+				} else if (command === "import" && name) {
+					await serial(async () => {
+						if (recording) throw new Error("Stop or cancel the active recording before importing");
+						const sourcePath = normalizeToolPath(name, ctx.cwd);
+						assertTransferPath(sourcePath, ctx.cwd, false, "import");
+						const parsed = parseFlow(await readFile(sourcePath, "utf8"), extra);
+						const { flow, strippedBrowserArgs } = sanitizedTransferFlow(parsed);
+						const destination = flowPath(flow.name);
+						await withFileMutationQueue(destination, async () => {
+							if (existsSync(destination)) throw new Error(`Flow ${flow.name} already exists; use browser_flow import with overwrite=true to replace it`);
+							await saveFlow(flow, true);
+						});
+						ctx.ui.notify(`Imported ${flow.name}; stripped ${strippedBrowserArgs} browser arguments`, "info");
+					});
 				} else if (command === "record" && name) {
 					const flow = await startRecording(name, { from: extra });
 					ctx.ui.setStatus("browser-flow", `recording ${flow.name}`);
@@ -505,7 +671,7 @@ export default function browserFlowsExtension(pi: ExtensionAPI) {
 					await saveFlow(flow, true);
 					ctx.ui.notify(`Documentation added to ${name}:${extra}`, "info");
 				} else {
-					ctx.ui.notify("Usage: /flow list | show NAME | record NAME [FROM] | stop [CHECKPOINT] | cancel | run NAME [TARGET] | doc NAME NODE|- PURPOSE", "warning");
+					ctx.ui.notify("Usage: /flow list | show NAME | export NAME PATH | import PATH [NAME] | record NAME [FROM] | stop [CHECKPOINT] | cancel | run NAME [TARGET] | doc NAME NODE|- PURPOSE", "warning");
 				}
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
