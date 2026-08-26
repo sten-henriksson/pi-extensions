@@ -32,6 +32,8 @@ Export creates a portable JSON copy, always removes browser/profile/session argu
 
 The graph format supports shared prefixes and guarded branches, so authenticated navigation can be reused by multiple destinations. Structured flow/checkpoint documentation lets agents discover a saved path by purpose and tags before inspecting its implementation.
 
+Legacy same-origin iframe and popup paths can use constrained durable actions when semantic lookup is unavailable: `frame-click`, `frame-assert-text`, `click-visible`, and `tab-switch-url`. These translate to fixed extension-controlled browser operations, so flows store reviewed selectors/globs rather than eval source or snapshot-local refs.
+
 ## Why background-jobs exists
 
 A 24h agent session log (341 bash calls) showed the model hand-rolling job control:

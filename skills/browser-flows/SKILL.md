@@ -24,10 +24,16 @@ Use saved workflow graphs before re-exploring a website.
    - `find text "See all settings" click --exact`
    - `find label Email fill value`
    - CSS only when semantic locators are unavailable.
-4. Avoid recording `@eN` refs. They are snapshot-local and saved nodes containing them are marked unstable.
-5. Give navigation actions an `expectUrl` or `expectText` assertion.
-6. Mark submits, sends, creates, deletes, and purchases with the correct `sideEffect`.
-7. End with `browser_flow { operation: "stop_recording", checkpoint: "useful-name" }`.
+4. For legacy same-origin iframe/popup controls that semantic lookup cannot reach, use only the constrained durable fallbacks:
+   - `frame-click <frame-css> <element-css>` — click a stable selector inside one same-origin iframe.
+   - `frame-assert-text <frame-css> <visible-text>` — wait for text inside that iframe.
+   - `click-visible <css>` — click the first visible duplicate in the current document.
+   - `tab-switch-url <url-glob>` — switch to exactly one matching popup tab.
+   These are fixed extension actions, not saved eval scripts. Use stable IDs/attributes and document why the fallback is needed.
+5. Avoid recording `@eN` refs. They are snapshot-local and saved nodes containing them are marked unstable.
+6. Give navigation actions an `expectUrl` or `expectText` assertion.
+7. Mark submits, sends, creates, deletes, and purchases with the correct `sideEffect`.
+8. End with `browser_flow { operation: "stop_recording", checkpoint: "useful-name" }`.
 
 Set `record: false` on observations (`snapshot`, `get`, screenshots), authentication, secrets, and one-off recovery actions.
 

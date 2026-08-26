@@ -22,7 +22,11 @@ function clipped(value: string): string {
 }
 
 export class AgentBrowser {
-	constructor(private readonly pi: ExtensionAPI) {}
+	private readonly pi: ExtensionAPI;
+
+	constructor(pi: ExtensionAPI) {
+		this.pi = pi;
+	}
 
 	async toWindowsPath(path: string): Promise<string> {
 		if (!IS_WSL_WITH_WINDOWS_DRIVE) return path;
@@ -31,7 +35,7 @@ export class AgentBrowser {
 		return result.stdout.trim();
 	}
 
-	async execute(globalArgs: string[], args: string[], signal?: AbortSignal, timeout = DEFAULT_COMMAND_TIMEOUT): Promise<BrowserResult> {
+	private async executeRaw(globalArgs: string[], args: string[], signal?: AbortSignal, timeout = DEFAULT_COMMAND_TIMEOUT): Promise<BrowserResult> {
 		// Under WSL, /mnt/c avoids cmd.exe's UNC-cwd warning for a Windows CLI.
 		// Native Linux/macOS/Windows runs from the Pi process cwd.
 		const result = await this.pi.exec("agent-browser", [...globalArgs, ...args], {
@@ -44,6 +48,45 @@ export class AgentBrowser {
 			stdout: clipped(result.stdout || ""),
 			stderr: clipped(result.stderr || ""),
 		};
+	}
+
+	async execute(globalArgs: string[], args: string[], signal?: AbortSignal, timeout = DEFAULT_COMMAND_TIMEOUT): Promise<BrowserResult> {
+		const command = args[0]?.toLowerCase();
+		if (command === "frame-click") {
+			if (args.length !== 3) throw new Error("frame-click requires <frame-css> <element-css>");
+			const [frameSelector, elementSelector] = args.slice(1);
+			const script = `(() => { const frame = document.querySelector(${JSON.stringify(frameSelector)}); if (!(frame instanceof HTMLIFrameElement)) throw new Error("frame not found"); const doc = frame.contentDocument; if (!doc) throw new Error("frame is not same-origin or not ready"); const element = doc.querySelector(${JSON.stringify(elementSelector)}); if (!element || typeof element.click !== "function") throw new Error("frame element not found"); element.click(); return "clicked durable frame element"; })()`;
+			return this.executeRaw(globalArgs, ["eval", script], signal, timeout);
+		}
+		if (command === "click-visible") {
+			if (args.length !== 2) throw new Error("click-visible requires <element-css>");
+			const script = `(() => { const element = [...document.querySelectorAll(${JSON.stringify(args[1])})].find((candidate) => candidate instanceof HTMLElement && candidate.getClientRects().length > 0); if (!(element instanceof HTMLElement)) throw new Error("visible element not found"); element.click(); return "clicked visible element"; })()`;
+			return this.executeRaw(globalArgs, ["eval", script], signal, timeout);
+		}
+		if (command === "frame-assert-text") {
+			if (args.length !== 3) throw new Error("frame-assert-text requires <frame-css> <visible-text>");
+			const [frameSelector, visibleText] = args.slice(1);
+			const condition = `(() => { const frame = document.querySelector(${JSON.stringify(frameSelector)}); return frame instanceof HTMLIFrameElement && !!frame.contentDocument?.body?.innerText.includes(${JSON.stringify(visibleText)}); })()`;
+			return this.executeRaw(globalArgs, ["wait", "--fn", condition], signal, timeout);
+		}
+		if (command === "tab-switch-url") {
+			if (args.length !== 2) throw new Error("tab-switch-url requires <url-glob>");
+			const requestedGlob = args[1];
+			let listing: BrowserResult | undefined;
+			for (let attempt = 0; attempt < 10; attempt += 1) {
+				listing = await this.executeRaw(globalArgs, ["tab"], signal, timeout);
+				if (listing.code !== 0) return listing;
+				const matches = listing.stdout.split("\n").flatMap((line) => {
+					const match = line.match(/\[([^\]]+)] .* - (https?:\/\/\S+)\s*$/);
+					return match && globMatches(match[2], requestedGlob) ? [match[1]] : [];
+				});
+				if (matches.length > 1) return { code: 1, stdout: listing.stdout, stderr: `Multiple tabs match ${requestedGlob}` };
+				if (matches.length === 1) return this.executeRaw(globalArgs, ["tab", matches[0]], signal, timeout);
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			}
+			return { code: 1, stdout: listing?.stdout ?? "", stderr: `No tab matches ${requestedGlob}` };
+		}
+		return this.executeRaw(globalArgs, args, signal, timeout);
 	}
 }
 

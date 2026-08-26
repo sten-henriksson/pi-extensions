@@ -4,6 +4,9 @@
   "description": "Coding-agent extensions for pi: reusable browser workflow graphs, background jobs, beads context, cross-session memory, and verified autonomous loops.",
   "keywords": ["pi-package"],
   "license": "MIT",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.mjs"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
