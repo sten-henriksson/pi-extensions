@@ -25,8 +25,10 @@ import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readSync, fstatSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import process from "node:process";
+import { backgroundShellCommand } from "./background-jobs-shell.ts";
 
 interface Job {
 	id: number;
@@ -48,7 +50,13 @@ interface Job {
 const jobs = new Map<number, Job>();
 let nextId = 1;
 let alive = true; // false once session_shutdown fired — never touch pi APIs after
-const LOG_DIR = join(tmpdir(), "pi-bg-jobs");
+// Some Windows shells expose TEMP as an unusable 8.3-style path. Prefer the
+// canonical local-app-data location for log files on Windows.
+const LOG_DIR = process.platform === "win32" && process.env.LOCALAPPDATA
+	? join(process.env.LOCALAPPDATA, "Temp", "pi-bg-jobs")
+	: join(tmpdir(), "pi-bg-jobs");
+const IS_WINDOWS = process.platform === "win32";
+const WINDOWS_RUNNER_PATH = fileURLToPath(new URL("./background-jobs-windows-runner.cjs", import.meta.url));
 let piRef: ExtensionAPI | undefined;
 let persistFn: (() => void) | undefined;
 
@@ -217,7 +225,7 @@ export default function (pi: ExtensionAPI) {
 		description:
 			"Start a long-running shell command as a background job and return immediately with a job id and log file. Use for anything expected to run >2 minutes (cargo test, just check-all, builds, dev servers, watchers). Completion is reported automatically in the conversation — no sleep-polling needed.",
 		parameters: Type.Object({
-			command: Type.String({ description: "Shell command to run (bash -c)" }),
+			command: Type.String({ description: "Shell command to run (bash -c on POSIX; cmd.exe /c on Windows)" }),
 			name: Type.Optional(Type.String({ description: "Short label, e.g. 'gate', 'vttd-tests'. Defaults to first word of command." })),
 			cwd: Type.Optional(Type.String({ description: "Working directory (default: pi cwd)" })),
 		}),
@@ -232,15 +240,15 @@ export default function (pi: ExtensionAPI) {
 			const logFile = join(LOG_DIR, `job-${id}-${Date.now()}.log`);
 			const cwd = params.cwd || process.cwd();
 			// The wrapper appends a sentinel line with the exact exit code so a
-			// re-attached session can still recover it from the log alone. The
-			// command runs in a SUBSHELL: a bare `exit N` inside it must not kill
-			// the wrapper before the sentinel is written.
-			const wrapped = `( ${params.command} ) &>> ${JSON.stringify(logFile)} ; echo "__BG_EXIT_$?" >> ${JSON.stringify(logFile)}`;
+			// re-attached session can still recover it from the log alone. It uses
+			// cmd.exe syntax on Windows and bash syntax elsewhere.
+			const shell = backgroundShellCommand(params.command, logFile, process.platform, process.env.ComSpec, WINDOWS_RUNNER_PATH);
 			const out = openSync(logFile, "a");
-			const child = spawn("/bin/bash", ["-c", wrapped], {
+			const child = spawn(shell.executable, shell.args, {
 				cwd,
 				stdio: ["ignore", out, out],
-				detached: true, // own process group → bg_kill reaches the whole tree
+				detached: true,
+				windowsHide: true,
 			});
 			closeSync(out);
 			child.unref();
@@ -373,6 +381,16 @@ export default function (pi: ExtensionAPI) {
 			if (!j) return { content: [{ type: "text", text: `no job '${params.job}'` }], isError: true };
 			if (j.done) return { content: [{ type: "text", text: jobLine(j) }] };
 			j.killed = true;
+			if (IS_WINDOWS) {
+				// Windows has no POSIX process groups. taskkill /T terminates the
+				// wrapper and every child it created, which is the closest equivalent.
+				const killer = spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `taskkill /pid ${j.pid} /t /f`], {
+					stdio: "ignore",
+					windowsHide: true,
+				});
+				killer.unref();
+				return { content: [{ type: "text", text: `sent taskkill /T /F to job ${j.id} "${j.name}" (pid ${j.pid})` }] };
+			}
 			try {
 				process.kill(-j.pid, "SIGTERM"); // negative pid = process group
 			} catch {
