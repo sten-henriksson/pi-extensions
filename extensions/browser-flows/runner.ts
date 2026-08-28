@@ -58,6 +58,12 @@ export class AgentBrowser {
 			const script = `(() => { const frame = document.querySelector(${JSON.stringify(frameSelector)}); if (!(frame instanceof HTMLIFrameElement)) throw new Error("frame not found"); const doc = frame.contentDocument; if (!doc) throw new Error("frame is not same-origin or not ready"); const element = doc.querySelector(${JSON.stringify(elementSelector)}); if (!element || typeof element.click !== "function") throw new Error("frame element not found"); element.click(); return "clicked durable frame element"; })()`;
 			return this.executeRaw(globalArgs, ["eval", script], signal, timeout);
 		}
+		if (command === "frame-select-text") {
+			if (args.length !== 4) throw new Error("frame-select-text requires <frame-css> <select-css> <visible-option>");
+			const [frameSelector, selectSelector, visibleOption] = args.slice(1);
+			const script = `(() => { const frame = document.querySelector(${JSON.stringify(frameSelector)}); if (!(frame instanceof HTMLIFrameElement)) throw new Error("frame not found"); const doc = frame.contentDocument; if (!doc) throw new Error("frame is not same-origin or not ready"); const select = doc.querySelector(${JSON.stringify(selectSelector)}); if (!(select instanceof HTMLSelectElement)) throw new Error("frame select not found"); const option = [...select.options].find((candidate) => candidate.text.trim() === ${JSON.stringify(visibleOption)}); if (!option) throw new Error("frame option not found"); select.value = option.value; select.dispatchEvent(new Event("input", { bubbles: true })); select.dispatchEvent(new Event("change", { bubbles: true })); return "selected durable frame option"; })()`;
+			return this.executeRaw(globalArgs, ["eval", script], signal, timeout);
+		}
 		if (command === "click-visible") {
 			if (args.length !== 2) throw new Error("click-visible requires <element-css>");
 			const script = `(() => { const element = [...document.querySelectorAll(${JSON.stringify(args[1])})].find((candidate) => candidate instanceof HTMLElement && candidate.getClientRects().length > 0); if (!(element instanceof HTMLElement)) throw new Error("visible element not found"); element.click(); return "clicked visible element"; })()`;

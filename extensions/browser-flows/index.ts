@@ -182,7 +182,7 @@ function recordingRisk(args: string[]): { blocked: boolean; optIn: boolean; reas
 	if (["auth", "cookies", "storage", "state", "eval", "clipboard"].includes(command)) {
 		return { blocked: true, optIn: false, reason: `${command} commands may contain credentials or private page data` };
 	}
-	if (["frame-click", "click-visible", "frame-assert-text", "tab-switch-url"].includes(command)) {
+	if (["frame-click", "frame-select-text", "click-visible", "frame-assert-text", "tab-switch-url"].includes(command)) {
 		if (args.slice(1).some((arg) => /@e\d+|javascript:/i.test(arg))) {
 			return { blocked: true, optIn: false, reason: `${command} requires durable selectors/globs, not temporary refs or scripts` };
 		}
@@ -205,6 +205,7 @@ function recordingRisk(args: string[]): { blocked: boolean; optIn: boolean; reas
 			return { blocked: true, optIn: false, reason: "invalid URL" };
 		}
 	}
+	if (command === "frame-select-text") return { blocked: false, optIn: true, reason: "frame option selection recording is opt-in" };
 	const entersValue = args.includes("fill") || args.includes("type") || args.includes("inserttext");
 	if (entersValue) return { blocked: false, optIn: true, reason: "value-entry recording is opt-in" };
 	if (["upload", "download", "screenshot", "pdf"].includes(command)) {
@@ -316,12 +317,12 @@ export default function browserFlowsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "browser_action",
 		label: "Browser Action",
-		description: "Run one agent-browser CLI command or constrained durable action. When flow recording is active, successful commands are appended to the graph. Prefer semantic find role/text/label commands; use frame-click, frame-assert-text, click-visible, or tab-switch-url only for legacy UI fallbacks. Never save temporary @e refs.",
+		description: "Run one agent-browser CLI command or constrained durable action. When flow recording is active, successful commands are appended to the graph. Prefer semantic find role/text/label commands; use frame-click, frame-select-text, frame-assert-text, click-visible, or tab-switch-url only for legacy UI fallbacks. Never save temporary @e refs.",
 		promptSnippet: "Drive agent-browser while optionally recording durable browser-flow graph nodes",
 		promptGuidelines: [
 			"Use browser_action instead of bash for agent-browser commands so successful actions can be recorded and outputs stay bounded.",
 			"While recording browser flows, prefer semantic agent-browser locators and do not record temporary @e refs, passwords, cookies, or tokens.",
-			"For same-origin legacy iframes/popups, constrained durable actions are available: frame-click <frame-css> <element-css>, frame-assert-text <frame-css> <text>, click-visible <css>, and tab-switch-url <url-glob>.",
+			"For same-origin legacy iframes/popups, constrained durable actions are available: frame-click <frame-css> <element-css>, frame-select-text <frame-css> <select-css> <visible-option>, frame-assert-text <frame-css> <text>, click-visible <css>, and tab-switch-url <url-glob>.",
 		],
 		parameters: Type.Object({
 			args: Type.Array(Type.String(), { minItems: 1, description: "agent-browser argv, excluding the executable and flow-level profile/session args" }),

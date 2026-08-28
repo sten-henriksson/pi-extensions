@@ -26,6 +26,7 @@ Use saved workflow graphs before re-exploring a website.
    - CSS only when semantic locators are unavailable.
 4. For legacy same-origin iframe/popup controls that semantic lookup cannot reach, use only the constrained durable fallbacks:
    - `frame-click <frame-css> <element-css>` — click a stable selector inside one same-origin iframe.
+   - `frame-select-text <frame-css> <select-css> <visible-option>` — select one exact visible option inside a same-origin iframe; recording requires explicit opt-in.
    - `frame-assert-text <frame-css> <visible-text>` — wait for text inside that iframe.
    - `click-visible <css>` — click the first visible duplicate in the current document.
    - `tab-switch-url <url-glob>` — switch to exactly one matching popup tab.

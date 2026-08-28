@@ -27,6 +27,17 @@ test("frame-click translates durable selectors into fixed same-origin script", a
   assert.doesNotMatch(script, /@e\d+/);
 });
 
+test("frame-select-text chooses an exact option and dispatches change", async () => {
+  const { browser, calls } = browserWith(() => ok("selected"));
+  const result = await browser.execute([], ["frame-select-text", "iframe#content", "select#company", "Approved Test"]);
+  assert.equal(result.code, 0);
+  assert.equal(calls[0].args[0], "eval");
+  assert.match(calls[0].args[1], /HTMLSelectElement/);
+  assert.match(calls[0].args[1], /Approved Test/);
+  assert.match(calls[0].args[1], /change/);
+  assert.doesNotMatch(calls[0].args[1], /@e\d+/);
+});
+
 test("click-visible and frame-assert-text use constrained fixed scripts", async () => {
   const { browser, calls } = browserWith(() => ok());
   await browser.execute([], ["click-visible", "input[value='Avbryt']"]);
@@ -62,5 +73,6 @@ test("tab-switch-url waits for one matching popup and switches by stable tab id"
 test("durable actions reject missing arguments", async () => {
   const { browser } = browserWith(() => ok());
   await assert.rejects(() => browser.execute([], ["frame-click", "iframe"]), /requires/);
+  await assert.rejects(() => browser.execute([], ["frame-select-text", "iframe", "select"]), /requires/);
   await assert.rejects(() => browser.execute([], ["tab-switch-url"]), /requires/);
 });
