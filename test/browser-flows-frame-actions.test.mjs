@@ -32,7 +32,7 @@ test("frame-select-text chooses an exact option and dispatches change", async ()
   const result = await browser.execute([], ["frame-select-text", "iframe#content", "select#company", "Approved Test"]);
   assert.equal(result.code, 0);
   assert.equal(calls[0].args[0], "eval");
-  assert.match(calls[0].args[1], /HTMLSelectElement/);
+  assert.match(calls[0].args[1], /tagName/);
   assert.match(calls[0].args[1], /Approved Test/);
   assert.match(calls[0].args[1], /change/);
   assert.doesNotMatch(calls[0].args[1], /@e\d+/);

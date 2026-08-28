@@ -19,7 +19,7 @@ function piExec(command, args, options = {}) {
 
 const pages = {
   "/": `<!doctype html><title>Parent</title><h1>Shell</h1><iframe id="content" src="/person"></iframe>`,
-  "/person": `<!doctype html><h1>Personuppgifter</h1><button id="NewPers" onclick="window.open('/wizard','ny-person')">Ny person</button>`,
+  "/person": `<!doctype html><h1>Personuppgifter</h1><select id="company"><option>Other</option><option>Approved Test</option></select><button id="NewPers" onclick="window.open('/wizard','ny-person')">Ny person</button>`,
   "/wizard": `<!doctype html><h1>Ny person</h1><label>Personnummer <input id="personnummer"></label><button id="cancel" onclick="window.close()">Avbryt</button>`,
 };
 
@@ -43,6 +43,8 @@ test("durable actions drive a real same-origin iframe and popup cleanup", { skip
   try {
     await run("open", `http://127.0.0.1:${address.port}/`);
     await run("frame-assert-text", "iframe#content", "Personuppgifter");
+    await run("frame-select-text", "iframe#content", "#company", "Approved Test");
+    assert.equal(JSON.parse((await run("eval", `document.querySelector("iframe#content").contentDocument.querySelector("#company").value`)).trim()), "Approved Test");
     await run("frame-click", "iframe#content", "#NewPers");
     await run("tab-switch-url", "**/wizard");
     assert.match(await run("get", "text", "body"), /Personnummer/);
