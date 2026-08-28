@@ -6,7 +6,9 @@ import type { BrowserFlow, FlowEdge, FlowNode, RunFailure } from "./types.ts";
 import { makeArtifactDir } from "./storage.ts";
 
 const OUTPUT_LIMIT = 50_000;
-const IS_WSL_WITH_WINDOWS_DRIVE = !!process.env.WSL_DISTRO_NAME && existsSync("/mnt/c/Windows");
+// A Windows Node process can inherit WSL_DISTRO_NAME, but it cannot use WSL's
+// /mnt/c working directory. Only a native POSIX Node process should use it.
+const IS_WSL_WITH_WINDOWS_DRIVE = process.platform !== "win32" && !!process.env.WSL_DISTRO_NAME && existsSync("/mnt/c/Windows");
 const EXEC_CWD = IS_WSL_WITH_WINDOWS_DRIVE ? "/mnt/c" : process.cwd();
 const configuredTimeout = Number(process.env.PI_BROWSER_COMMAND_TIMEOUT_MS ?? 60_000);
 const DEFAULT_COMMAND_TIMEOUT = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 60_000;
