@@ -15,12 +15,18 @@ function browserWith(handler) {
 
 const ok = (stdout = "ok") => ({ code: 0, stdout, stderr: "" });
 
+function cliArgs(args) {
+  const withoutRunner = args[0]?.endsWith("agent-browser.js") ? args.slice(1) : args;
+  return withoutRunner.filter((arg) => arg !== "--session" && arg !== "fixture");
+}
+
 test("frame-click translates durable selectors into fixed same-origin script", async () => {
   const { browser, calls } = browserWith(() => ok("clicked"));
   const result = await browser.execute(["--session", "fixture"], ["frame-click", "iframe#content", "#NewPers"]);
   assert.equal(result.code, 0);
-  assert.deepEqual(calls[0].args.slice(0, 3), ["--session", "fixture", "eval"]);
-  const script = calls[0].args[3];
+  const args = cliArgs(calls[0].args);
+  assert.equal(args[0], "eval");
+  const script = args[1];
   assert.match(script, /HTMLIFrameElement/);
   assert.match(script, /iframe#content/);
   assert.match(script, /#NewPers/);
@@ -31,27 +37,30 @@ test("frame-select-text chooses an exact option and dispatches change", async ()
   const { browser, calls } = browserWith(() => ok("selected"));
   const result = await browser.execute([], ["frame-select-text", "iframe#content", "select#company", "Approved Test"]);
   assert.equal(result.code, 0);
-  assert.equal(calls[0].args[0], "eval");
-  assert.match(calls[0].args[1], /tagName/);
-  assert.match(calls[0].args[1], /Approved Test/);
-  assert.match(calls[0].args[1], /change/);
-  assert.doesNotMatch(calls[0].args[1], /@e\d+/);
+  const args = cliArgs(calls[0].args);
+  assert.equal(args[0], "eval");
+  assert.match(args[1], /tagName/);
+  assert.match(args[1], /Approved Test/);
+  assert.match(args[1], /change/);
+  assert.doesNotMatch(args[1], /@e\d+/);
 });
 
 test("click-visible and frame-assert-text use constrained fixed scripts", async () => {
   const { browser, calls } = browserWith(() => ok());
   await browser.execute([], ["click-visible", "input[value='Avbryt']"]);
   await browser.execute([], ["frame-assert-text", "iframe#content", "Personuppgifter"]);
-  assert.equal(calls[0].args[0], "eval");
-  assert.match(calls[0].args[1], /getClientRects/);
-  assert.deepEqual(calls[1].args.slice(0, 2), ["wait", "--fn"]);
-  assert.match(calls[1].args[2], /contentDocument/);
+  const clickArgs = cliArgs(calls[0].args);
+  const waitArgs = cliArgs(calls[1].args);
+  assert.equal(clickArgs[0], "eval");
+  assert.match(clickArgs[1], /getClientRects/);
+  assert.deepEqual(waitArgs.slice(0, 2), ["wait", "--fn"]);
+  assert.match(waitArgs[2], /contentDocument/);
 });
 
 test("tab-switch-url waits for one matching popup and switches by stable tab id", async () => {
   let listings = 0;
   const { browser, calls } = browserWith((_command, args) => {
-    const localArgs = args.filter((arg) => arg !== "--session" && arg !== "fixture");
+    const localArgs = cliArgs(args);
     if (localArgs[0] === "tab" && localArgs.length === 1) {
       listings += 1;
       return ok(listings === 1

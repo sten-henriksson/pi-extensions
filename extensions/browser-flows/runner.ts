@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { BrowserFlow, FlowEdge, FlowNode, RunFailure } from "./types.ts";
 import { makeArtifactDir } from "./storage.ts";
@@ -38,9 +38,14 @@ export class AgentBrowser {
 	}
 
 	private async executeRaw(globalArgs: string[], args: string[], signal?: AbortSignal, timeout = DEFAULT_COMMAND_TIMEOUT): Promise<BrowserResult> {
+		// npm's Windows `agent-browser` shim is a POSIX shell script in some
+		// installations and cannot be spawned by Node directly. Invoke the CLI's
+		// JavaScript entry point through this Node runtime instead.
+		const windowsCli = process.env.AGENT_BROWSER_CLI_PATH || join(dirname(process.execPath), "node_modules", "agent-browser", "bin", "agent-browser.js");
+		const useWindowsCli = process.platform === "win32" && existsSync(windowsCli);
 		// Under WSL, /mnt/c avoids cmd.exe's UNC-cwd warning for a Windows CLI.
 		// Native Linux/macOS/Windows runs from the Pi process cwd.
-		const result = await this.pi.exec("agent-browser", [...globalArgs, ...args], {
+		const result = await this.pi.exec(useWindowsCli ? process.execPath : "agent-browser", useWindowsCli ? [windowsCli, ...globalArgs, ...args] : [...globalArgs, ...args], {
 			cwd: EXEC_CWD,
 			signal,
 			timeout,
