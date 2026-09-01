@@ -11,6 +11,7 @@ Extensions for [pi](https://npmjs.com/package/@earendil-works/pi-coding-agent), 
 | **ralph** (`/ralph`, `ralph_start`/`ralph_done`) | Long-running agent loops (fork of tmustier/pi-ralph-wiggum, MIT) with an **independent completion verifier**: the completion marker is a claim, not a verdict — a judge model (`.ralph/judge.json`, ideally a different model) reviews the task file's verification record before the loop may complete; rejected claims re-prompt with reasons (max 3). |
 | **debug-course** (`debug_tour_state` / `debug_tour_history`, `/debug-state`, `/onboard`) | Connects Pi to a local breakpoint-tour server for sanitized debugger state and guided onboarding courses. `/onboard setup` requires the Python `breakpoint_tour` module; set `BPTOUR_TOOL_PATH` when its checkout is not discoverable automatically. |
 | **spiderverse** (`spiderverse_config` / `spiderverse_artifact_path` / checksum tools, `/spiderverse-config`) | Validates a project's `wiki.yaml`, resolves safely contained artifact paths, and supports privacy-preserving page-change checks. |
+| **subagents** (`subagent`, `/subagents`) | Delegates independent tasks to parallel text-only model calls or isolated Pi child agents. Supports configurable cheap/medium/strong model tiers, read-only defaults, explicit write access, and per-user configuration in `~/.pi/agent/subagents.json`. |
 
 ## browser-flows
 
