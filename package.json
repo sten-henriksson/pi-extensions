@@ -1,7 +1,7 @@
 {
   "name": "pi-extensions",
   "version": "0.1.0",
-  "description": "Coding-agent extensions for pi: reusable browser workflow graphs, background jobs, beads context, cross-session memory, and verified autonomous loops.",
+  "description": "Coding-agent extensions for pi: reusable browser workflow graphs, background jobs, cross-session memory, and verified autonomous loops.",
   "keywords": ["pi-package"],
   "license": "MIT",
   "scripts": {
